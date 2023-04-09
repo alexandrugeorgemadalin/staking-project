@@ -12,6 +12,13 @@ error StakedAmountMustBeGreaterThanZero();
 error UnstakeAmountMustBeGreaterThanZero();
 error InsufficientStakedBalance();
 error NoRewardsEarned();
+error RewardBoostMustNotBeNegative();
+error PoolAlreadyCreated();
+error LockPeriodExceedsStakingPeriod();
+error NoTokensStaked();
+error TokensAlreadyLocked();
+error TokensNotYetUnlockable();
+error NoTokensLocked();
 
 contract StakingContract is AccessControl {
     IERC20 public stakingToken;
@@ -38,18 +45,30 @@ contract StakingContract is AccessControl {
     // used to store the last update time
     uint256 public lastUpdateTime;
 
+    uint256 public lockPeriod;
+    uint256 public rewardBoost;
+    mapping(address => uint256) public lockedBalance;
+    mapping(address => uint256) public lockedAt;
+
     event PoolCreated(uint256 rewardsPoolAmount, uint256 deadline);
     event Staked(address user, uint256 amount);
     event Unstaked(address user, uint256 amount);
     event ClaimedRewards(address user, uint256 amount);
     event Restaked(address user, uint256 amount);
+    event LockedTokens(address user, uint256 amount, uint256 boost, uint256 period);
+    event UnlockedTokens(address user, uint256 amount);
 
     constructor(address _stakingToken) {
         stakingToken = IERC20(_stakingToken);
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
-    function createPool(uint256 _rewardsPoolAmount, uint256 _days) public onlyRole(DEFAULT_ADMIN_ROLE) {
+    function createPool(
+        uint256 _rewardsPoolAmount,
+        uint256 _days,
+        uint256 _rewardBoost,
+        uint256 _lockingDays
+    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_days == 0) {
             revert DeadlineMustBeInTheFuture();
         }
@@ -58,6 +77,12 @@ contract StakingContract is AccessControl {
             revert RewardsPoolAmountMustBeGreaterThanZero();
         }
 
+        if (isPoolCreated) {
+            revert PoolAlreadyCreated();
+        }
+
+        lockPeriod = _lockingDays * 1 days;
+        rewardBoost = _rewardBoost;
         rewardsPoolAmount = _rewardsPoolAmount;
         deadline = block.timestamp + (_days * 1 days);
         isPoolCreated = true;
@@ -94,7 +119,9 @@ contract StakingContract is AccessControl {
         }
 
         lastUpdateTime = currentTimestamp;
-        rewardsEarned[msg.sender] += stakedBalance[msg.sender] * (rewardsPerToken - rewardsPerTokenPaid[msg.sender]);
+        rewardsEarned[msg.sender] +=
+            (stakedBalance[msg.sender] + rewardBoost * lockedBalance[msg.sender]) *
+            (rewardsPerToken - rewardsPerTokenPaid[msg.sender]);
         rewardsPerTokenPaid[msg.sender] = rewardsPerToken;
         stakedBalance[msg.sender] += _amount;
         totalStakedBalance += _amount;
@@ -128,7 +155,8 @@ contract StakingContract is AccessControl {
 
         lastUpdateTime = currentTimestamp;
         rewardsEarned[msg.sender] +=
-            (stakedBalance[msg.sender] * (rewardsPerToken - rewardsPerTokenPaid[msg.sender])) /
+            ((stakedBalance[msg.sender] + rewardBoost * lockedBalance[msg.sender]) *
+                (rewardsPerToken - rewardsPerTokenPaid[msg.sender])) /
             1e18;
         rewardsPerTokenPaid[msg.sender] = rewardsPerToken;
         stakedBalance[msg.sender] -= _amount;
@@ -155,7 +183,8 @@ contract StakingContract is AccessControl {
 
         lastUpdateTime = currentTimestamp;
         rewardsEarned[msg.sender] +=
-            (stakedBalance[msg.sender] * (rewardsPerToken - rewardsPerTokenPaid[msg.sender])) /
+            ((stakedBalance[msg.sender] + rewardBoost * lockedBalance[msg.sender]) *
+                (rewardsPerToken - rewardsPerTokenPaid[msg.sender])) /
             1e18;
         rewardsPerTokenPaid[msg.sender] = rewardsPerToken;
 
@@ -179,21 +208,8 @@ contract StakingContract is AccessControl {
 
         return
             (rewardsEarned[msg.sender] +
-                stakedBalance[msg.sender] *
+                (stakedBalance[msg.sender] + rewardBoost * lockedBalance[msg.sender]) *
                 (rewardPerToken - rewardsPerTokenPaid[msg.sender])) / 1e18 ** 2;
-    }
-
-    // defined only for testing purposes
-    function getRewardsEarned(address _address) public view returns (uint256) {
-        return rewardsEarned[_address];
-    }
-
-    function getStakedBalance(address _address) public view returns (uint256) {
-        return stakedBalance[_address];
-    }
-
-    function getRewardsPerTokenPaid(address _address) public view returns (uint256) {
-        return rewardsPerTokenPaid[_address];
     }
 
     function restake() public {
@@ -221,7 +237,9 @@ contract StakingContract is AccessControl {
         }
 
         lastUpdateTime = currentTimestamp;
-        rewardsEarned[msg.sender] += stakedBalance[msg.sender] * (rewardsPerToken - rewardsPerTokenPaid[msg.sender]);
+        rewardsEarned[msg.sender] +=
+            (stakedBalance[msg.sender] + rewardBoost * lockedBalance[msg.sender]) *
+            (rewardsPerToken - rewardsPerTokenPaid[msg.sender]);
         rewardsPerTokenPaid[msg.sender] = rewardsPerToken;
         uint256 earnedRewards = rewardsEarned[msg.sender] / 1e18 ** 2;
         rewardsEarned[msg.sender] = 0;
@@ -229,5 +247,106 @@ contract StakingContract is AccessControl {
         totalStakedBalance += earnedRewards;
 
         emit Restaked(msg.sender, earnedRewards);
+    }
+
+    function lockTokens() public {
+        if (!isPoolCreated) {
+            revert PoolNotCreated();
+        }
+
+        if (block.timestamp > deadline) {
+            revert StakingPeriodEnded();
+        }
+
+        if (block.timestamp + lockPeriod > deadline) {
+            revert LockPeriodExceedsStakingPeriod();
+        }
+
+        if (stakedBalance[msg.sender] == 0) {
+            revert NoTokensStaked();
+        }
+
+        if (lockedBalance[msg.sender] > 0) {
+            revert TokensAlreadyLocked();
+        }
+
+        _lockTokens();
+    }
+
+    function _lockTokens() internal {
+        uint256 currentTimestamp = block.timestamp > deadline ? deadline : block.timestamp;
+
+        if (totalStakedBalance != 0) {
+            rewardsPerToken += ((rewardsRatePerSecond * (currentTimestamp - lastUpdateTime) * 1e18) /
+                totalStakedBalance);
+        }
+
+        lastUpdateTime = currentTimestamp;
+        rewardsEarned[msg.sender] += stakedBalance[msg.sender] * (rewardsPerToken - rewardsPerTokenPaid[msg.sender]);
+        rewardsPerTokenPaid[msg.sender] = rewardsPerToken;
+
+        uint256 stakedAmount = stakedBalance[msg.sender];
+        stakedBalance[msg.sender] = 0;
+        lockedBalance[msg.sender] += stakedAmount;
+        lockedAt[msg.sender] = currentTimestamp;
+
+        totalStakedBalance += stakedAmount * (rewardBoost - 1);
+        emit LockedTokens(msg.sender, stakedAmount, rewardBoost, lockPeriod);
+    }
+
+    function unlockTokens() public {
+        if (!isPoolCreated) {
+            revert PoolNotCreated();
+        }
+
+        if (lockedBalance[msg.sender] == 0) {
+            revert NoTokensLocked();
+        }
+
+        if (block.timestamp < lockedAt[msg.sender] + lockPeriod) {
+            revert TokensNotYetUnlockable();
+        }
+
+        _unlockTokens();
+    }
+
+    function _unlockTokens() internal {
+        uint256 currentTimestamp = block.timestamp > deadline ? deadline : block.timestamp;
+
+        if (totalStakedBalance != 0) {
+            rewardsPerToken += ((rewardsRatePerSecond * (currentTimestamp - lastUpdateTime) * 1e18) /
+                totalStakedBalance);
+        }
+
+        lastUpdateTime = currentTimestamp;
+        rewardsEarned[msg.sender] +=
+            (stakedBalance[msg.sender] + rewardBoost * lockedBalance[msg.sender]) *
+            (rewardsPerToken - rewardsPerTokenPaid[msg.sender]);
+        rewardsPerTokenPaid[msg.sender] = rewardsPerToken;
+
+        uint256 lockedAmount = lockedBalance[msg.sender];
+        lockedBalance[msg.sender] = 0;
+        stakedBalance[msg.sender] += lockedAmount;
+        lockedAt[msg.sender] = 0;
+
+        totalStakedBalance -= lockedAmount * (rewardBoost - 1);
+        emit UnlockedTokens(msg.sender, lockedAmount);
+    }
+
+    // defined only for testing purposes
+    function getRewardsEarned(address _address) public view returns (uint256) {
+        return rewardsEarned[_address];
+    }
+
+    function getStakedBalance(address _address) public view returns (uint256) {
+        return stakedBalance[_address];
+    }
+
+    function getLockedStakedBalance(address _address) public view returns (uint256) {
+        return lockedBalance[_address];
+    }
+
+    function getRewardsPerTokenPaid(address _address) public view returns (uint256) {
+        return rewardsPerTokenPaid[_address];
     }
 }

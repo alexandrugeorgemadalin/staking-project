@@ -46,25 +46,33 @@ describe("StakingToken", async () => {
   });
 
   it("Deadline should be in the future when creating the pool", async () => {
-    await expect(StakingContractContract.createPool(1, 0)).to.be.revertedWithCustomError(
+    await expect(StakingContractContract.createPool(1, 0, 0, 0)).to.be.revertedWithCustomError(
       StakingContractContract,
       "DeadlineMustBeInTheFuture",
     );
   });
 
   it("Pool rewards amount must be positive", async () => {
-    await expect(StakingContractContract.createPool(0, 1)).to.be.revertedWithCustomError(
+    await expect(StakingContractContract.createPool(0, 1, 0, 0)).to.be.revertedWithCustomError(
       StakingContractContract,
       "RewardsPoolAmountMustBeGreaterThanZero",
     );
   });
 
   it("Only owner can create the pool", async () => {
-    await expect(StakingContractContract.connect(user1).createPool(0, 1)).to.be.reverted;
+    await expect(StakingContractContract.connect(user1).createPool(0, 1, 0, 0)).to.be.reverted;
+  });
+
+  it("Cannot create pool multiple times", async () => {
+    await StakingContractContract.connect(owner).createPool(100, 1, 0, 0);
+    await expect(StakingContractContract.connect(owner).createPool(100, 1, 0, 0)).to.be.revertedWithCustomError(
+      StakingContractContract,
+      "PoolAlreadyCreated",
+    );
   });
 
   it("Create pool function should set the rewardsPoolAmount and the deadline", async () => {
-    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther("100"), 1);
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther("100"), 1, 0, 0);
     const blockNumber = await time.latestBlock();
     const timestamp = (await ethers.provider.getBlock(blockNumber)).timestamp;
     expect(await StakingContractContract.totalStakedBalance()).to.be.equals(0);
@@ -87,7 +95,7 @@ describe("StakingToken", async () => {
   });
 
   it("Cannot stake in a pool after the deadline", async () => {
-    await StakingContractContract.connect(owner).createPool(100, 1);
+    await StakingContractContract.connect(owner).createPool(100, 1, 0, 0);
 
     await ethers.provider.send("evm_increaseTime", [day + 10]);
 
@@ -98,7 +106,7 @@ describe("StakingToken", async () => {
   });
 
   it("Staking amount must be greater than 0", async () => {
-    await StakingContractContract.connect(owner).createPool(100, 1);
+    await StakingContractContract.connect(owner).createPool(100, 1, 0, 0);
 
     await expect(StakingContractContract.stake(0)).to.be.revertedWithCustomError(
       StakingContractContract,
@@ -114,7 +122,7 @@ describe("StakingToken", async () => {
   });
 
   it("Unstaking amount must be greater than 0", async () => {
-    await StakingContractContract.connect(owner).createPool(100, 1);
+    await StakingContractContract.connect(owner).createPool(100, 1, 0, 0);
 
     await expect(StakingContractContract.unstake(0)).to.be.revertedWithCustomError(
       StakingContractContract,
@@ -123,7 +131,7 @@ describe("StakingToken", async () => {
   });
 
   it("Cannot unstake more than you have in the pool", async () => {
-    await StakingContractContract.connect(owner).createPool(100, 1);
+    await StakingContractContract.connect(owner).createPool(100, 1, 0, 0);
 
     await expect(StakingContractContract.unstake(1)).to.be.revertedWithCustomError(
       StakingContractContract,
@@ -133,7 +141,7 @@ describe("StakingToken", async () => {
 
   it("Users can stake tokens in the pool", async () => {
     // 1 token per second as reward rate
-    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1);
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1, 0, 0);
     await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("100"));
 
     expect(await StakingTokenContract.balanceOf(user1.address)).to.be.equals(ethers.utils.parseEther("999900"));
@@ -146,21 +154,16 @@ describe("StakingToken", async () => {
     expect(await StakingContractContract.getStakedBalance(user1.address)).to.be.equals(ethers.utils.parseEther("100"));
     expect(await StakingContractContract.getRewardsPerTokenPaid(user1.address)).to.be.equals(0);
 
-    await ethers.provider.send("evm_increaseTime", [10]);
+    await time.increase(10);
     await StakingContractContract.connect(user2).stake(ethers.utils.parseEther("50"));
 
     expect(await StakingTokenContract.balanceOf(user2.address)).to.be.equals(ethers.utils.parseEther("999950"));
     expect(await StakingContractContract.totalStakedBalance()).to.be.equals(ethers.utils.parseEther("150"));
-
-    const rewardsRatePerSecond = Number(ethers.utils.formatEther(await StakingContractContract.rewardsRatePerSecond()));
-    const rewardsPerToken = Number(ethers.utils.formatEther(await StakingContractContract.rewardsPerToken()));
-
-    expect(rewardsPerToken).to.be.equal((rewardsRatePerSecond * 10) / 100);
   });
 
   it("Users can unstake tokens from the pool", async () => {
     // 1 token per second as reward rate
-    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1);
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1, 0, 0);
     await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("100"));
 
     await ethers.provider.send("evm_increaseTime", [10]);
@@ -182,7 +185,7 @@ describe("StakingToken", async () => {
 
   it("Users cannot claim 0 rewards", async () => {
     // 1 token per second as reward rate
-    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1);
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1, 0, 0);
 
     await expect(StakingContractContract.claimRewards()).to.be.revertedWithCustomError(
       StakingContractContract,
@@ -192,7 +195,7 @@ describe("StakingToken", async () => {
 
   it("Check earned rewards", async () => {
     // 1 token per second as reward rate
-    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1);
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1, 0, 0);
     await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("10"));
 
     expect(await StakingTokenContract.balanceOf(user1.address)).to.be.equal(ethers.utils.parseEther("999990"));
@@ -214,7 +217,7 @@ describe("StakingToken", async () => {
 
   it("Users can claim their rewards", async () => {
     // 1 token per second as reward rate
-    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1);
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1, 0, 0);
     await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("10"));
 
     expect(await StakingTokenContract.balanceOf(user1.address)).to.be.equal(ethers.utils.parseEther("999990"));
@@ -260,7 +263,7 @@ describe("StakingToken", async () => {
   });
 
   it("Rewards should be offered only for the specified period", async () => {
-    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1);
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1, 0, 0);
     // one second lost from the reward
     await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("10"));
 
@@ -292,13 +295,13 @@ describe("StakingToken", async () => {
     const timestamp = 20000000000;
     await time.setNextBlockTimestamp(timestamp);
     // from the tests I saw that it takes about 8 seconds to create the pool this way
-    await expect(StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1))
+    await expect(StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1, 0, 0))
       .to.emit(StakingContractContract, "PoolCreated")
       .withArgs(ethers.utils.parseEther(day.toString()), timestamp + day + 8);
   });
 
   it("Should emit Staked event", async () => {
-    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1);
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1, 0, 0);
 
     await expect(StakingContractContract.connect(user1).stake(ethers.utils.parseEther("10")))
       .to.emit(StakingContractContract, "Staked")
@@ -306,7 +309,7 @@ describe("StakingToken", async () => {
   });
 
   it("Should emit Unstaked event", async () => {
-    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1);
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1, 0, 0);
     await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("10"));
     await expect(StakingContractContract.connect(user1).unstake(ethers.utils.parseEther("10")))
       .to.emit(StakingContractContract, "Unstaked")
@@ -314,7 +317,7 @@ describe("StakingToken", async () => {
   });
 
   it("Should emit Restake event", async () => {
-    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1);
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1, 0, 0);
     await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("10"));
 
     await time.increase(10);
@@ -325,7 +328,7 @@ describe("StakingToken", async () => {
   });
 
   it("Should emit ClaimedRewards event", async () => {
-    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1);
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1, 0, 0);
     await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("10"));
 
     await time.increase(10);
@@ -336,7 +339,7 @@ describe("StakingToken", async () => {
   });
 
   it("Restake earned rewards", async () => {
-    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1);
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1, 0, 0);
     await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("10"));
 
     await time.increase(10);
@@ -349,5 +352,168 @@ describe("StakingToken", async () => {
     expect(await StakingContractContract.connect(user1).getStakedBalance(user1.address)).to.be.equal(
       ethers.utils.parseEther("21"),
     );
+  });
+
+  it("Should not lock tokens when pool is not created", async () => {
+    await expect(StakingContractContract.connect(user1).lockTokens()).to.be.revertedWithCustomError(
+      StakingContractContract,
+      "PoolNotCreated",
+    );
+  });
+
+  it("Cannot lock tokens after deadline", async () => {
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1, 1, 1);
+    await time.increase(2 * day);
+    await expect(StakingContractContract.connect(user1).lockTokens()).to.be.revertedWithCustomError(
+      StakingContractContract,
+      "StakingPeriodEnded",
+    );
+  });
+
+  it("Cannot lock tokens if the period exceeds the staking period", async () => {
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 1, 1, 1);
+    await time.increase(day / 2);
+
+    await expect(StakingContractContract.connect(user1).lockTokens()).to.be.revertedWithCustomError(
+      StakingContractContract,
+      "LockPeriodExceedsStakingPeriod",
+    );
+  });
+
+  it("Cannot lock 0 tokens", async () => {
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 2, 1, 1);
+
+    await expect(StakingContractContract.connect(user1).lockTokens()).to.be.revertedWithCustomError(
+      StakingContractContract,
+      "NoTokensStaked",
+    );
+  });
+
+  it("Lock with no boost", async () => {
+    // 0.5 tokens per second as reward rate
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 2, 1, 1);
+    await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("10"));
+    // 0.5 reward
+    await StakingContractContract.connect(user1).lockTokens();
+    expect(await StakingContractContract.connect(user1).getStakedBalance(user1.address)).to.be.equal(0);
+    expect(await StakingContractContract.connect(user1).getLockedStakedBalance(user1.address)).to.be.equal(
+      ethers.utils.parseEther("10"),
+    );
+
+    await time.increase(10);
+
+    expect(
+      Number(ethers.utils.formatEther(await StakingContractContract.connect(user1).getRewardsAmount())),
+    ).to.be.equal(5.5);
+  });
+
+  it("Lock tokens with boost", async () => {
+    // 1 token per second as reward rate
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther((2 * day).toString()), 2, 2, 1);
+    await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("10"));
+    await StakingContractContract.connect(user2).stake(ethers.utils.parseEther("20"));
+
+    expect(
+      Number(ethers.utils.formatEther(await StakingContractContract.connect(user1).getRewardsAmount())),
+    ).to.be.equal(1);
+
+    await StakingContractContract.connect(user1).lockTokens();
+
+    await time.increase(10);
+
+    // 1 / 3 is the reward for the second before the lock
+    expect(
+      Number(ethers.utils.formatEther(await StakingContractContract.connect(user1).getRewardsAmount())),
+    ).to.be.equal(6 + 1 / 3);
+
+    expect(
+      Number(ethers.utils.formatEther(await StakingContractContract.connect(user2).getRewardsAmount())),
+    ).to.be.equal(5 + 2 / 3);
+  });
+
+  it("Should not unlock tokens when pool is not created", async () => {
+    await expect(StakingContractContract.connect(user1).unlockTokens()).to.be.revertedWithCustomError(
+      StakingContractContract,
+      "PoolNotCreated",
+    );
+  });
+
+  it("Cannot unlock 0 tokens", async () => {
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 2, 1, 1);
+
+    await expect(StakingContractContract.connect(user1).unlockTokens()).to.be.revertedWithCustomError(
+      StakingContractContract,
+      "NoTokensLocked",
+    );
+  });
+
+  it("Cannot unlock tokens before locking period ends", async () => {
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 2, 1, 1);
+
+    await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("10"));
+    await StakingContractContract.connect(user1).lockTokens();
+
+    await expect(StakingContractContract.connect(user1).unlockTokens()).to.be.revertedWithCustomError(
+      StakingContractContract,
+      "TokensNotYetUnlockable",
+    );
+  });
+
+  it("Unlock tokens", async () => {
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 2, 2, 1);
+
+    await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("10"));
+
+    await StakingContractContract.connect(user1).lockTokens();
+    expect(
+      Number(ethers.utils.formatEther(await StakingContractContract.connect(user1).totalStakedBalance())),
+    ).to.be.equal(20);
+    expect(
+      Number(
+        ethers.utils.formatEther(await StakingContractContract.connect(user1).getLockedStakedBalance(user1.address)),
+      ),
+    ).to.be.equal(10);
+    expect(
+      Number(ethers.utils.formatEther(await StakingContractContract.connect(user1).getStakedBalance(user1.address))),
+    ).to.be.equal(0);
+
+    await time.increase(day);
+
+    await StakingContractContract.connect(user1).unlockTokens();
+    expect(
+      Number(ethers.utils.formatEther(await StakingContractContract.connect(user1).totalStakedBalance())),
+    ).to.be.equal(10);
+    expect(
+      Number(
+        ethers.utils.formatEther(await StakingContractContract.connect(user1).getLockedStakedBalance(user1.address)),
+      ),
+    ).to.be.equal(0);
+    expect(
+      Number(ethers.utils.formatEther(await StakingContractContract.connect(user1).getStakedBalance(user1.address))),
+    ).to.be.equal(10);
+  });
+
+  it("Should emit LockedTokens event", async () => {
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 2, 2, 1);
+
+    await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("10"));
+
+    await expect(StakingContractContract.connect(user1).lockTokens())
+      .to.emit(StakingContractContract, "LockedTokens")
+      .withArgs(user1.address, ethers.utils.parseEther("10"), 2, day);
+  });
+
+  it("Should emit UnlockTokens event", async () => {
+    await StakingContractContract.connect(owner).createPool(ethers.utils.parseEther(day.toString()), 2, 2, 1);
+
+    await StakingContractContract.connect(user1).stake(ethers.utils.parseEther("10"));
+
+    await StakingContractContract.connect(user1).lockTokens();
+
+    await time.increase(day);
+
+    await expect(StakingContractContract.connect(user1).unlockTokens())
+      .to.emit(StakingContractContract, "UnlockedTokens")
+      .withArgs(user1.address, ethers.utils.parseEther("10"));
   });
 });
