@@ -45,9 +45,13 @@ contract StakingContract is AccessControl {
     // used to store the last update time
     uint256 public lastUpdateTime;
 
+    // used to store the lock period
     uint256 public lockPeriod;
+    // used to store the reward boost
     uint256 public rewardBoost;
+    // used to store the locked balance of each user
     mapping(address => uint256) public lockedBalance;
+    // used to store the time at which the tokens were locked
     mapping(address => uint256) public lockedAt;
 
     event PoolCreated(uint256 rewardsPoolAmount, uint256 deadline);

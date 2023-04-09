@@ -1,167 +1,78 @@
-# Hardhat Template [![Open in Gitpod][gitpod-badge]][gitpod] [![Github Actions][gha-badge]][gha] [![Hardhat][hardhat-badge]][hardhat] [![License: MIT][license-badge]][license]
+# Staking contract
 
-[gitpod]: https://gitpod.io/#https://github.com/paulrberg/hardhat-template
-[gitpod-badge]: https://img.shields.io/badge/Gitpod-Open%20in%20Gitpod-FFB45B?logo=gitpod
-[gha]: https://github.com/paulrberg/hardhat-template/actions
-[gha-badge]: https://github.com/paulrberg/hardhat-template/actions/workflows/ci.yml/badge.svg
-[hardhat]: https://hardhat.org/
-[hardhat-badge]: https://img.shields.io/badge/Built%20with-Hardhat-FFDB1C.svg
-[license]: https://opensource.org/licenses/MIT
-[license-badge]: https://img.shields.io/badge/License-MIT-blue.svg
+## Reward distribution algorithm
 
-A Hardhat-based template for developing Solidity smart contracts, with sensible defaults.
+```
+For the algorithm we use the following notation:
+R = reward rate per second = total rewards / duration
+T = total staked tokens
 
-- [Hardhat](https://github.com/nomiclabs/hardhat): compile, run and test smart contracts
-- [TypeChain](https://github.com/ethereum-ts/TypeChain): generate TypeScript bindings for smart contracts
-- [Ethers](https://github.com/ethers-io/ethers.js/): renowned Ethereum library and wallet implementation
-- [Solhint](https://github.com/protofire/solhint): code linter
-- [Solcover](https://github.com/sc-forks/solidity-coverage): code coverage
-- [Prettier Plugin Solidity](https://github.com/prettier-solidity/prettier-plugin-solidity): code formatter
+We will store in a variable called rewardPerToken the sum of the rewards accumulated in the reward distribution from the start to the current moment.
 
-## Getting Started
+We will store in a mapping called rewardsPerTokenPaid for each user the moment at which it was last time paid
 
-Click the [`Use this template`](https://github.com/paulrberg/hardhat-template/generate) button at the top of the page to
-create a new repository with this repo as the initial state.
+We know that the reward per token at time j1 is equal to:
+rj1 = rj0 + R * (j1 - j0) / T
 
-## Features
+We can calculate the rewards for a user using the followig formula:
+reward = stakedBalance[user](rewardPerToken - rewardsPerTokenPaid[user])
+We basically can see this formula in two parts:
 
-This template builds upon the frameworks and libraries mentioned above, so for details about their specific features,
-please consult their respective documentations.
+stakedBalance[user] * rewardPerToken = the reward if the user was in the pool from the beginning of it
 
-For example, for Hardhat, you can refer to the [Hardhat Tutorial](https://hardhat.org/tutorial) and the
-[Hardhat Docs](https://hardhat.org/docs). You might be in particular interested in reading the
-[Testing Contracts](https://hardhat.org/tutorial/testing-contracts) section.
+stakedBalance[user] * rewardsPerTokenPaid[user] = the reward that the user is not eligible to receive becase he entered the pool at that specific time
 
-### Sensible Defaults
+Now if we go through an example to be able to deduct the steps of the algorithm:
+Lets say we have the following interaction with the pool:
+t = 3 Alice stakes 100
+t = 5 Bob stakes 200
+t = 6 Alice unstakes 100
 
-This template comes with sensible default configurations in the following files:
+-----------------------------------------------------------------------
+t = 0: we have T = 0, rewardPerToken = 0;
+-----------------------------------------------------------------------
+t = 3: Alice +100
+    rewardPerToken += R * (t3 - t0) / T = 0 because T is 0 for the moment
+    rewards[Alice] += tokens[Alice](rewardPerToken - rewardPerTokenPaid[Alice]) = 0
+    rewardPerTokenPaid[Alice] = rewardPerToken
+    T += 100 = 100
+    tokens[Alice] += 100 = 100
+-----------------------------------------------------------------------
+t = 5: Bob +200
+    rewardPerToken += R * (t5 - t3) / T = 2 * R / 100
+    rewards[Bob] += tokens[Bob](rewardPerToken - rewardPerTokenPaid[Bob]) = 0
+    rewardPerTokenPaid[Bob] = rewardPerToken
+    T += 200 = 300
+    tokens[Bob] += 200 = 200
+-----------------------------------------------------------------------
+t = 6: Alice -100
+    rewardPerToken += R * (t6 - t5) / T = 2 * R / 100 + R / 300
+    rewards[Alice] += tokens[Alice](rewardPerToken - rewardPerTokenPaid[Alice]) =
+= 100 * (2 * R / 100 + R / 300 - 0) = 100 * (7 * R / 300)
+    rewardPerTokenPaid[Alice] = rewardPerToken
+    T -= 100 = 200
+    tokens[Alice] -= 100 = 0
 
-```text
-├── .editorconfig
-├── .eslintignore
-├── .eslintrc.yml
-├── .gitignore
-├── .prettierignore
-├── .prettierrc.yml
-├── .solcover.js
-├── .solhint.json
-└── hardhat.config.ts
 ```
 
-### VSCode Integration
+### Using the steps from above, I implemented the staking contract that calculates the rewards for each second.
 
-This template is IDE agnostic, but for the best user experience, you may want to use it in VSCode alongside Nomic
-Foundation's [Solidity extension](https://marketplace.visualstudio.com/items?itemName=NomicFoundation.hardhat-solidity).
+### As a bonus, I implemented a mechanism that lets you lock your staked tokens in order to boost the rewards. This locking mechanism can be called only once for all the staked tokens you have and you have to wait until the locking period has elapsed in order to unlock or lock more tokens. Also, in the meantime you have the posibility to stake and unstake more tokens but they will not be locked and will not get boosted rewards. Also, I added a restake functionality that lets you reinvest your tokens in the pool directly without having to claim the rewards and stake them afterwards.
 
-### GitHub Actions
+```
+I was able to do using by modifying the previous algorithm: each time a user locks their staked tokens, I will remove
+the staked tokens from the stakedBalance mapping and add them to the lockedBalance mapping. After that I updated the
+total totalStakedBalance:
 
-This template comes with GitHub Actions pre-configured. Your contracts will be linted and tested on every push and pull
-request made to the `main` branch.
+`totalStakedBalance += stakedAmount * (rewardBoost - 1)`
 
-Note though that to make this work, you must use your `INFURA_API_KEY` and your `MNEMONIC` as GitHub secrets.
+And when I calculate the rewards I use the following formula:
 
-You can edit the CI script in [.github/workflows/ci.yml](./.github/workflows/ci.yml).
-
-## Usage
-
-### Pre Requisites
-
-Before being able to run any command, you need to create a `.env` file and set a BIP-39 compatible mnemonic as an
-environment variable. You can follow the example in `.env.example`. If you don't already have a mnemonic, you can use
-this [website](https://iancoleman.io/bip39/) to generate one.
-
-Then, proceed with installing dependencies:
-
-```sh
-$ pnpm install
+`rewardsEarned[user] += (stakedBalance[user] + rewardBoost * lockedBalance[user]) * (rewardsPerToken - rewardsPerTokenPaid[user])`
 ```
 
-### Compile
+### As a first basic implementation, I wanted to keep a mapping with all the rewards and each time someone interacts with the contract to calculate the rewards for all users but that was a poor implementation because it could easily revert the transactions if the contract would have a lot of users that staked tokens.
 
-Compile the smart contracts with Hardhat:
+### For the math part I've watched a video that explains how to calculate the rewards:
 
-```sh
-$ pnpm compile
-```
-
-### TypeChain
-
-Compile the smart contracts and generate TypeChain bindings:
-
-```sh
-$ pnpm typechain
-```
-
-### Test
-
-Run the tests with Hardhat:
-
-```sh
-$ pnpm test
-```
-
-### Lint Solidity
-
-Lint the Solidity code:
-
-```sh
-$ pnpm lint:sol
-```
-
-### Lint TypeScript
-
-Lint the TypeScript code:
-
-```sh
-$ pnpm lint:ts
-```
-
-### Coverage
-
-Generate the code coverage report:
-
-```sh
-$ pnpm coverage
-```
-
-### Report Gas
-
-See the gas usage per unit test and average gas per method call:
-
-```sh
-$ REPORT_GAS=true pnpm test
-```
-
-### Clean
-
-Delete the smart contract artifacts, the coverage reports and the Hardhat cache:
-
-```sh
-$ pnpm clean
-```
-
-### Deploy
-
-Deploy the contracts to Hardhat Network:
-
-```sh
-$ pnpm deploy --greeting "Bonjour, le monde!"
-```
-
-## Tips
-
-### Syntax Highlighting
-
-If you use VSCode, you can get Solidity syntax highlighting with the
-[hardhat-solidity](https://marketplace.visualstudio.com/items?itemName=NomicFoundation.hardhat-solidity) extension.
-
-## Using GitPod
-
-[GitPod](https://www.gitpod.io/) is an open-source developer platform for remote development.
-
-To view the coverage report generated by `pnpm coverage`, just click `Go Live` from the status bar to turn the server
-on/off.
-
-## License
-
-This project is licensed under MIT.
+`https://www.youtube.com/watch?v=32n3Vu0BK4g`
